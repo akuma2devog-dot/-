@@ -1,55 +1,47 @@
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from pymongo import MongoClient
 
-# ===== Environment variables =====
+# ================= ENV =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
+PORT = int(os.getenv("PORT", 10000))  # Render provides PORT
 
 if not BOT_TOKEN or not MONGO_URI:
     raise RuntimeError("Missing environment variables")
 
-# ===== MongoDB connection (ready for later use) =====
+# ================= MONGO =================
 client = MongoClient(MONGO_URI)
 db = client.animebot
 anime_col = db.anime
 
-# ===== Commands =====
+# ================= TELEGRAM =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎬 Welcome to AKUKAMI Anime Bot\n\n"
-        "Use channel buttons to get episodes."
+        "🎬 Welcome to AKUKAMI Anime Bot\n\nBot is running perfectly."
     )
 
-# STEP 1: Get DOCUMENT file_id
-async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message and update.message.document:
-        file_id = update.message.document.file_id
-        file_name = update.message.document.file_name
-
-        await update.message.reply_text(
-            f"📁 Document received\n\n"
-            f"📄 File name:\n{file_name}\n\n"
-            f"🆔 FILE_ID:\n{file_id}"
-        )
-    else:
-        await update.message.reply_text(
-            "❌ Please upload the episode as a DOCUMENT file."
-        )
-
-# ===== Main =====
-def main():
+def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("fileid", get_file_id))
-
     app.run_polling()
 
+# ================= HTTP SERVER (for Render) =================
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    server.serve_forever()
+
+# ================= MAIN =================
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_server).start()
+    run_bot()
