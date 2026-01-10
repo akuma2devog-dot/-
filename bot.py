@@ -3,7 +3,13 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
@@ -11,7 +17,10 @@ PORT = int(os.getenv("PORT", 10000))
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN missing")
 
-# ========== TELEGRAM COMMANDS ==========
+# Store last document per user
+LAST_DOC = {}
+
+# ========== TELEGRAM HANDLERS ==========
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -20,28 +29,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "I will give you a usable FILE_ID."
     )
 
-async def clone_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def capture_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.document:
-        doc = update.message.document
-
-        # Re-send document to generate NEW file_id
-        sent = await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=doc.file_id
-        )
-
-        new_file_id = sent.document.file_id
+        user_id = update.effective_user.id
+        LAST_DOC[user_id] = update.message.document.file_id
 
         await update.message.reply_text(
-            "♻️ File cloned successfully!\n\n"
-            f"🆔 NEW FILE_ID:\n{new_file_id}"
-        )
-    else:
-        await update.message.reply_text(
-            "❌ Forward a DOCUMENT file first, then send /clone"
+            "✅ Document received.\n"
+            "Now send /clone"
         )
 
-# ========== HTTP SERVER (Render Web Service fix) ==========
+async def clone_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in LAST_DOC:
+        await update.message.reply_text(
+            "❌ No document found.\n"
+            "Forward a DOCUMENT file first."
+        )
+        return
+
+    original_file_id = LAST_DOC[user_id]
+
+    sent = await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=original_file_id
+    )
+
+    new_file_id = sent.document.file_id
+
+    await update.message.reply_text(
+        "♻️ File cloned successfully!\n\n"
+        f"🆔 NEW FILE_ID:\n{new_file_id}"
+    )
+
+# ========== HTTP SERVER (Render Web Service) ==========
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -59,6 +81,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.ALL, capture_document))
     app.add_handler(CommandHandler("clone", clone_document))
 
     app.run_polling()
