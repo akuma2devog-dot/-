@@ -2,10 +2,13 @@ import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BOT_TOKEN = os.getenv("7543377011:AAEekT4reRGc-Nyci5cqoi2v9_F-0wA4FT4")
+BOT_TOKEN = os.getenv("7543377011:AAFTSEoTMvFsPAiUUNicfrDIlPeY-v-6Ctg")
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is NOT loaded from environment")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is alive (test mode).")
+    await update.message.reply_text("✅ Bot is alive!")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
