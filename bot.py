@@ -105,7 +105,17 @@ async def get_episode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         document=data["file_id"]
     )
-
+async def mongo_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        db.command("ping")
+        count = episodes.count_documents({})
+        await update.message.reply_text(
+            f"✅ MongoDB connected\n📦 Episodes stored: {count}"
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ MongoDB error:\n{str(e)}"
+        )
 # ========== HTTP ==========
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -125,7 +135,7 @@ def main():
     app.add_handler(CommandHandler("clone", clone_document))
     app.add_handler(CommandHandler("add", add_episode))
     app.add_handler(CommandHandler("get", get_episode))
-
+    app.add_handler(CommandHandler("mongotest", mongo_test))
     app.run_polling()
 
 if __name__ == "__main__":
