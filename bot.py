@@ -28,7 +28,7 @@ if not BOT_TOKEN or not MONGO_URI:
     raise RuntimeError("Missing environment variables")
 
 # ========== ADMIN ==========
-ADMIN_IDS = [123456789]  # 🔴 replace with YOUR Telegram user ID
+ADMIN_IDS = [6028405107]  # 🔴 replace with YOUR Telegram user ID
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
