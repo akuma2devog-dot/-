@@ -11,22 +11,34 @@ from telegram.ext import (
     filters
 )
 
+from pymongo import MongoClient
+
+# ================= ENV =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URI = os.getenv("MONGO_URI")
 PORT = int(os.getenv("PORT", 10000))
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN missing")
+if not BOT_TOKEN or not MONGO_URI:
+    raise RuntimeError("Missing environment variables")
 
-# Store last document per user
-LAST_DOC = {}
+# ================= MONGO =================
+mongo = MongoClient(MONGO_URI)
+db = mongo.animebot
+episodes = db.episodes
 
-# ========== TELEGRAM HANDLERS ==========
+# ================= MEMORY =================
+LAST_DOC = {}        # forwarded document file_id
+LAST_CLONED = {}     # cloned (bot-owned) file_id
+
+# ================= TELEGRAM =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📥 Forward me a DOCUMENT file\n"
-        "Then send /clone\n\n"
-        "I will give you a usable FILE_ID."
+        "🎬 AKUKAMI Anime Bot\n\n"
+        "1️⃣ Forward a DOCUMENT file\n"
+        "2️⃣ Send /clone\n"
+        "3️⃣ Send /add <episode> <quality>\n\n"
+        "Example:\n/add 1 720p"
     )
 
 async def capture_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -44,26 +56,66 @@ async def clone_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id not in LAST_DOC:
         await update.message.reply_text(
-            "❌ No document found.\n"
-            "Forward a DOCUMENT file first."
+            "❌ Forward a DOCUMENT file first."
         )
         return
 
-    original_file_id = LAST_DOC[user_id]
-
     sent = await context.bot.send_document(
         chat_id=update.effective_chat.id,
-        document=original_file_id
+        document=LAST_DOC[user_id]
     )
 
     new_file_id = sent.document.file_id
+    LAST_CLONED[user_id] = new_file_id
 
     await update.message.reply_text(
         "♻️ File cloned successfully!\n\n"
-        f"🆔 NEW FILE_ID:\n{new_file_id}"
+        "Now store it using:\n"
+        "`/add <episode> <quality>`\n"
+        "Example: `/add 1 720p`",
+        parse_mode="Markdown"
     )
 
-# ========== HTTP SERVER (Render Web Service) ==========
+async def add_episode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+
+    if user_id not in LAST_CLONED:
+        await update.message.reply_text(
+            "❌ Clone a file first using /clone"
+        )
+        return
+
+    if len(args) != 2:
+        await update.message.reply_text(
+            "❌ Usage:\n/add <episode> <quality>\nExample: /add 1 720p"
+        )
+        return
+
+    try:
+        episode_no = int(args[0])
+        quality = args[1]
+    except ValueError:
+        await update.message.reply_text("❌ Episode must be a number")
+        return
+
+    episodes.insert_one({
+        "anime": "Classroom of the Elite",
+        "season": 1,
+        "episode": episode_no,
+        "quality": quality,
+        "file_id": LAST_CLONED[user_id]
+    })
+
+    await update.message.reply_text(
+        f"✅ Stored successfully!\n\n"
+        f"Anime: Classroom of the Elite\n"
+        f"Season: 1\n"
+        f"Episode: {episode_no}\n"
+        f"Quality: {quality}"
+    )
+
+# ================= HTTP SERVER =================
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -75,7 +127,7 @@ def run_server():
     server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
     server.serve_forever()
 
-# ========== MAIN ==========
+# ================= MAIN =================
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -83,6 +135,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.ALL, capture_document))
     app.add_handler(CommandHandler("clone", clone_document))
+    app.add_handler(CommandHandler("add", add_episode))
 
     app.run_polling()
 
