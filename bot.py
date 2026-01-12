@@ -207,78 +207,79 @@ async def bulk_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         BULK_STATE.pop(uid)
         await update.message.reply_text("🛑 Bulk stopped")
 
-# ========== DOCUMENT (FORCED RENAME) ==========
+# ========== DOCUMENT (FORCED RENAME – FIXED) ==========
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     doc = update.message.document
+
     await update.message.reply_text("⏳ Processing file, please wait…")
 
-    tg_file = await context.bot.get_file(doc.file_id)
-    temp_path = f"/tmp/{doc.file_unique_id}"
-    await tg_file.download_to_drive(temp_path)
-
-    try:
-        # ---------- REUPLOAD ----------
-        if uid in REUPLOAD_STATE:
-            r = REUPLOAD_STATE.pop(uid)
-            filename = build_filename(r["anime"], r["season"], r["ep"], r["quality"])
-
-            sent = await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=InputFile(temp_path, filename=filename),
-                thumbnail=get_thumb()
-            )
-
-            episodes.update_one(
-                {"anime": r["anime"], "season": r["season"], "episode": r["ep"], "quality": r["quality"]},
-                {"$set": {"file_id": sent.document.file_id}}
-            )
-
-            await update.message.reply_text("✅ Episode replaced")
-            return
-
-        # ---------- BULK ----------
-        if uid not in BULK_STATE or not is_admin(uid):
-            return
-
-        s = BULK_STATE[uid]
-        ep = s["ep"]
-
-        exists = episodes.find_one({
-            "anime": s["anime"],
-            "season": s["season"],
-            "episode": ep,
-            "quality": s["quality"]
-        })
-
-        if exists:
-            await update.message.reply_text(f"⚠️ Episode {ep} already exists")
-            return
-
-        filename = build_filename(s["anime"], s["season"], ep, s["quality"])
+    # ---------- REUPLOAD ----------
+    if uid in REUPLOAD_STATE:
+        r = REUPLOAD_STATE.pop(uid)
+        filename = build_filename(r["anime"], r["season"], r["ep"], r["quality"])
 
         sent = await context.bot.send_document(
             chat_id=update.effective_chat.id,
-            document=InputFile(temp_path, filename=filename),
+            document=doc.file_id,   # 🔥 NO DOWNLOAD
+            filename=filename,
             thumbnail=get_thumb()
         )
 
-        episodes.insert_one({
-            "anime": s["anime"],
-            "season": s["season"],
-            "episode": ep,
-            "quality": s["quality"],
-            "file_id": sent.document.file_id
-        })
+        episodes.update_one(
+            {
+                "anime": r["anime"],
+                "season": r["season"],
+                "episode": r["ep"],
+                "quality": r["quality"]
+            },
+            {"$set": {"file_id": sent.document.file_id}}
+        )
 
-        s["ep"] += 1
-        LAST_BULK[uid] = s.copy()
+        await update.message.reply_text("✅ Episode replaced")
+        return
 
-        await update.message.reply_text(f"✅ Episode {ep} added")
+    # ---------- BULK ----------
+    if uid not in BULK_STATE or not is_admin(uid):
+        return
 
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    s = BULK_STATE[uid]
+    ep = s["ep"]
+
+    exists = episodes.find_one({
+        "anime": s["anime"],
+        "season": s["season"],
+        "episode": ep,
+        "quality": s["quality"]
+    })
+
+    if exists:
+        await update.message.reply_text(f"⚠️ Episode {ep} already exists")
+        return
+
+    filename = build_filename(s["anime"], s["season"], ep, s["quality"])
+
+    sent = await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=doc.file_id,   # 🔥 NO DOWNLOAD
+        filename=filename,
+        thumbnail=get_thumb()
+    )
+
+    episodes.insert_one({
+        "anime": s["anime"],
+        "season": s["season"],
+        "episode": ep,
+        "quality": s["quality"],
+        "file_id": sent.document.file_id
+    })
+
+    s["ep"] += 1
+    LAST_BULK[uid] = s.copy()
+
+    await update.message.reply_text(f"✅ Episode {ep} added")
+
+
 
 # ========== PREVIEW ==========
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
