@@ -211,6 +211,7 @@ async def bulk_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     doc = update.message.document
+    await update.message.reply_text("⏳ Processing file, please wait…")
 
     tg_file = await context.bot.get_file(doc.file_id)
     temp_path = f"/tmp/{doc.file_unique_id}"
