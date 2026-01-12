@@ -2,11 +2,16 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters
 )
@@ -35,9 +40,9 @@ config = db.config
 
 # ========== STATES ==========
 BULK_STATE = {}
-LAST_BULK = {}          # ✅ NEW (for resume)
-SET_THUMB_WAIT = set()
+LAST_BULK = {}          # ✅ for resume
 REUPLOAD_STATE = {}
+SET_THUMB_WAIT = set()
 
 # ========== HELPERS ==========
 def get_thumb():
@@ -45,11 +50,7 @@ def get_thumb():
     return d["file_id"] if d else None
 
 def set_thumb(fid):
-    config.update_one(
-        {"_id": "thumb"},
-        {"$set": {"file_id": fid}},
-        upsert=True
-    )
+    config.update_one({"_id": "thumb"}, {"$set": {"file_id": fid}}, upsert=True)
 
 def build_filename(season, episode):
     return f"S{season}E{episode} @anifindX.mkv"
@@ -67,33 +68,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Welcome!\n\nAdmins can use /admin"
     )
 
-# ========== ADMIN ==========
+# ========== ADMIN PANEL (BUTTONS) ==========
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
+    kb = [
+        [InlineKeyboardButton("📦 Start Bulk", callback_data="admin_bulk")],
+        [InlineKeyboardButton("▶️ Resume Bulk", callback_data="admin_resume")],
+        [InlineKeyboardButton("🛑 Stop Bulk", callback_data="admin_done")],
+        [InlineKeyboardButton("👁 Preview", callback_data="admin_preview")],
+        [InlineKeyboardButton("♻ Reupload", callback_data="admin_reupload")],
+        [InlineKeyboardButton("🗑 Delete Season", callback_data="admin_delete")],
+        [InlineKeyboardButton("🖼 Change Thumbnail", callback_data="admin_thumb")],
+        [InlineKeyboardButton("📊 Mongo Status", callback_data="admin_mongo")]
+    ]
+
     await update.message.reply_text(
-        "👑 ADMIN COMMANDS\n\n"
-        "/bulk <ANIME> <SEASON> <QUALITY>\n"
-        "/resumebulk\n"
-        "/done\n"
-        "/preview <ANIME> <SEASON> <QUALITY>\n"
-        "/delete <ANIME> <SEASON>\n"
-        "/reupload <ANIME> <SEASON> <QUALITY> <EP>\n"
-        "/mongostatus\n"
-        "\n🖼 Send image to update thumbnail"
+        "👑 Admin Panel",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
+
+async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+
+    if not is_admin(uid):
+        return
+
+    if q.data == "admin_bulk":
+        await q.message.reply_text("Use:\n/bulk <ANIME> <SEASON> <QUALITY>")
+
+    elif q.data == "admin_resume":
+        if uid not in LAST_BULK:
+            await q.message.reply_text("❌ No bulk to resume")
+            return
+        BULK_STATE[uid] = LAST_BULK[uid].copy()
+        s = BULK_STATE[uid]
+        await q.message.reply_text(
+            f"▶️ Resumed\n{s['anime']} S{s['season']} {s['quality']}\n"
+            f"Next Episode: {s['ep']}"
+        )
+
+    elif q.data == "admin_done":
+        await bulk_done(update, context)
+
+    elif q.data == "admin_preview":
+        await q.message.reply_text("Use:\n/preview <ANIME> <SEASON> <QUALITY>")
+
+    elif q.data == "admin_reupload":
+        await q.message.reply_text(
+            "Use:\n/reupload <ANIME> <SEASON> <QUALITY> <EP>"
+        )
+
+    elif q.data == "admin_delete":
+        await q.message.reply_text("Use:\n/delete <ANIME> <SEASON>")
+
+    elif q.data == "admin_thumb":
+        SET_THUMB_WAIT.add(uid)
+        await q.message.reply_text("🖼 Send new thumbnail image")
+
+    elif q.data == "admin_mongo":
+        db.command("ping")
+        total = episodes.count_documents({})
+        await q.message.reply_text(
+            f"✅ MongoDB connected\n📦 Total episodes stored: {total}"
+        )
 
 # ========== THUMB ==========
 async def receive_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    if not update.message.photo:
-        return
-
-    fid = update.message.photo[-1].file_id
-    set_thumb(fid)
-    await update.message.reply_text("✅ Thumbnail updated")
+    uid = update.effective_user.id
+    if uid in SET_THUMB_WAIT and is_admin(uid):
+        fid = update.message.photo[-1].file_id
+        set_thumb(fid)
+        SET_THUMB_WAIT.remove(uid)
+        await update.message.reply_text("✅ Thumbnail updated")
 
 # ========== BULK ==========
 async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,9 +154,8 @@ async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     anime, season, quality = context.args
-    season = int(season)
     anime = anime.upper()
-
+    season = int(season)
     ep = get_next_episode(anime, season, quality)
 
     state = {
@@ -121,28 +170,14 @@ async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"📦 Bulk started\n{anime} S{season} {quality}\n"
-        f"➡️ Starting from Episode {ep}"
-    )
-
-async def resume_bulk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid not in LAST_BULK:
-        await update.message.reply_text("❌ No previous bulk to resume")
-        return
-
-    BULK_STATE[uid] = LAST_BULK[uid].copy()
-    s = BULK_STATE[uid]
-
-    await update.message.reply_text(
-        f"▶️ Bulk resumed\n{s['anime']} S{s['season']} {s['quality']}\n"
-        f"➡️ Next Episode: {s['ep']}"
+        f"Starting from Episode {ep}"
     )
 
 async def bulk_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in BULK_STATE:
         BULK_STATE.pop(uid)
-        await update.message.reply_text("🛑 Bulk upload stopped")
+        await update.message.reply_text("🛑 Bulk stopped")
 
 # ========== DOCUMENT ==========
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,24 +186,16 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # REUPLOAD
     if uid in REUPLOAD_STATE:
         r = REUPLOAD_STATE.pop(uid)
-
         sent = await context.bot.send_document(
             chat_id=update.effective_chat.id,
             document=update.message.document.file_id,
             filename=build_filename(r["season"], r["ep"]),
             thumbnail=get_thumb()
         )
-
         episodes.update_one(
-            {
-                "anime": r["anime"],
-                "season": r["season"],
-                "episode": r["ep"],
-                "quality": r["quality"]
-            },
+            {"anime": r["anime"], "season": r["season"], "episode": r["ep"], "quality": r["quality"]},
             {"$set": {"file_id": sent.document.file_id}}
         )
-
         await update.message.reply_text("✅ Episode replaced")
         return
 
@@ -179,7 +206,6 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = BULK_STATE[uid]
     ep = s["ep"]
 
-    # DUPLICATE CHECK
     exists = episodes.find_one({
         "anime": s["anime"],
         "season": s["season"],
@@ -217,10 +243,6 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    if len(context.args) != 3:
-        await update.message.reply_text("Usage: /preview <ANIME> <SEASON> <QUALITY>")
-        return
-
     anime, season, quality = context.args
     eps = episodes.find(
         {"anime": anime.upper(), "season": int(season), "quality": quality}
@@ -241,10 +263,6 @@ async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delete_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    if len(context.args) != 2:
-        await update.message.reply_text("Usage: /delete <ANIME> <SEASON>")
-        return
-
     anime, season = context.args
     res = episodes.delete_many({"anime": anime.upper(), "season": int(season)})
     await update.message.reply_text(f"🗑 Deleted {res.deleted_count} episodes")
@@ -253,12 +271,6 @@ async def delete_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-    if len(context.args) != 4:
-        await update.message.reply_text(
-            "Usage: /reupload <ANIME> <SEASON> <QUALITY> <EP>"
-        )
-        return
-
     anime, season, quality, ep = context.args
     REUPLOAD_STATE[update.effective_user.id] = {
         "anime": anime.upper(),
@@ -267,16 +279,6 @@ async def reupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ep": int(ep)
     }
     await update.message.reply_text("♻️ Send new file now")
-
-# ========== MONGO ==========
-async def mongo_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    db.command("ping")
-    total = episodes.count_documents({})
-    await update.message.reply_text(
-        f"✅ MongoDB connected\n📦 Total episodes stored: {total}"
-    )
 
 # ========== HTTP ==========
 class HealthHandler(BaseHTTPRequestHandler):
@@ -294,8 +296,9 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CallbackQueryHandler(admin_buttons))
+
     app.add_handler(CommandHandler("bulk", bulk_start))
-    app.add_handler(CommandHandler("resumebulk", resume_bulk))
     app.add_handler(CommandHandler("done", bulk_done))
     app.add_handler(CommandHandler("preview", preview))
     app.add_handler(CommandHandler("delete", delete_season))
