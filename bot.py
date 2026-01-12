@@ -279,6 +279,37 @@ async def reupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ep": int(ep)
     }
     await update.message.reply_text("♻️ Send new file now")
+    # ========== GET EPISODE (ADMIN ONLY) ==========
+async def get_episode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) != 4:
+        await update.message.reply_text(
+            "Usage: /get <ANIME> <SEASON> <QUALITY> <EP>"
+        )
+        return
+
+    anime, season, quality, ep = context.args
+    anime = anime.upper()
+    season = int(season)
+    ep = int(ep)
+
+    data = episodes.find_one({
+        "anime": anime,
+        "season": season,
+        "quality": quality,
+        "episode": ep
+    })
+
+    if not data:
+        await update.message.reply_text("❌ Episode not found")
+        return
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=data["file_id"]
+    )
 
 # ========== HTTP ==========
 class HealthHandler(BaseHTTPRequestHandler):
@@ -316,6 +347,7 @@ def main():
     app.add_handler(CommandHandler("delete", delete_season))
     app.add_handler(CommandHandler("reupload", reupload))
     app.add_handler(CommandHandler("mongostatus", mongo_status))
+    app.add_handler(CommandHandler("get", get_episode))
 
     app.add_handler(MessageHandler(filters.PHOTO, receive_thumb))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
