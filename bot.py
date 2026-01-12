@@ -38,6 +38,7 @@ client = MongoClient(MONGO_URI)
 db = client.animebot
 episodes = db.episodes
 config = db.config
+templates = db.templates   # 🆕 NEW
 
 # ========== STATES ==========
 BULK_STATE = {}
@@ -53,15 +54,36 @@ def get_thumb():
 def set_thumb(fid):
     config.update_one({"_id": "thumb"}, {"$set": {"file_id": fid}}, upsert=True)
 
-def build_filename(season, episode):
-    return f"S{season}E{episode} @anifindX.mkv"
-
 def get_next_episode(anime, season, quality):
     last = episodes.find_one(
         {"anime": anime, "season": season, "quality": quality},
         sort=[("episode", -1)]
     )
     return last["episode"] + 1 if last else 1
+
+# ---------- TEMPLATE HELPERS (NEW) ----------
+def get_template(anime):
+    doc = templates.find_one({"anime": anime})
+    return doc["template"] if doc else None
+
+def set_template(anime, template):
+    templates.update_one(
+        {"anime": anime},
+        {"$set": {"template": template}},
+        upsert=True
+    )
+
+def build_filename(anime, season, episode, quality):
+    tpl = get_template(anime)
+    if not tpl:
+        return f"S{season}E{episode} @anifindX.mkv"
+
+    return tpl.format(
+        ANIME=anime,
+        SEASON=f"{season:02}",
+        EP=f"{episode:02}",
+        QUALITY=quality
+    )
 
 # ========== START ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,6 +152,25 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = episodes.count_documents({})
         await q.message.reply_text(f"✅ MongoDB connected\n📦 Total episodes stored: {total}")
 
+# ========== SET TEMPLATE (NEW) ==========
+async def settemplate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage:\n/settemplate <ANIME> <TEMPLATE>\n\n"
+            "Example:\n"
+            "/settemplate COTE {ANIME} S{SEASON}E{EP} {QUALITY} @anifindX.mkv"
+        )
+        return
+
+    anime = context.args[0].upper()
+    template = " ".join(context.args[1:])
+    set_template(anime, template)
+
+    await update.message.reply_text(f"✅ Template set for {anime}")
+
 # ========== THUMB ==========
 async def receive_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -143,6 +184,10 @@ async def receive_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
+    if len(context.args) != 3:
+        await update.message.reply_text("Usage: /bulk <ANIME> <SEASON> <QUALITY>")
+        return
+
     anime, season, quality = context.args
     anime = anime.upper()
     season = int(season)
@@ -167,15 +212,49 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     doc = update.message.document
 
-    # download original
     tg_file = await context.bot.get_file(doc.file_id)
     temp_path = f"/tmp/{doc.file_unique_id}"
     await tg_file.download_to_drive(temp_path)
 
-    # ---------- REUPLOAD ----------
-    if uid in REUPLOAD_STATE:
-        r = REUPLOAD_STATE.pop(uid)
-        filename = build_filename(r["season"], r["ep"])
+    try:
+        # ---------- REUPLOAD ----------
+        if uid in REUPLOAD_STATE:
+            r = REUPLOAD_STATE.pop(uid)
+            filename = build_filename(r["anime"], r["season"], r["ep"], r["quality"])
+
+            sent = await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=InputFile(temp_path, filename=filename),
+                thumbnail=get_thumb()
+            )
+
+            episodes.update_one(
+                {"anime": r["anime"], "season": r["season"], "episode": r["ep"], "quality": r["quality"]},
+                {"$set": {"file_id": sent.document.file_id}}
+            )
+
+            await update.message.reply_text("✅ Episode replaced")
+            return
+
+        # ---------- BULK ----------
+        if uid not in BULK_STATE or not is_admin(uid):
+            return
+
+        s = BULK_STATE[uid]
+        ep = s["ep"]
+
+        exists = episodes.find_one({
+            "anime": s["anime"],
+            "season": s["season"],
+            "episode": ep,
+            "quality": s["quality"]
+        })
+
+        if exists:
+            await update.message.reply_text(f"⚠️ Episode {ep} already exists")
+            return
+
+        filename = build_filename(s["anime"], s["season"], ep, s["quality"])
 
         sent = await context.bot.send_document(
             chat_id=update.effective_chat.id,
@@ -183,54 +262,22 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
             thumbnail=get_thumb()
         )
 
-        episodes.update_one(
-            {"anime": r["anime"], "season": r["season"], "episode": r["ep"], "quality": r["quality"]},
-            {"$set": {"file_id": sent.document.file_id}}
-        )
+        episodes.insert_one({
+            "anime": s["anime"],
+            "season": s["season"],
+            "episode": ep,
+            "quality": s["quality"],
+            "file_id": sent.document.file_id
+        })
 
-        os.remove(temp_path)
-        await update.message.reply_text("✅ Episode replaced")
-        return
+        s["ep"] += 1
+        LAST_BULK[uid] = s.copy()
 
-    # ---------- BULK ----------
-    if uid not in BULK_STATE or not is_admin(uid):
-        os.remove(temp_path)
-        return
+        await update.message.reply_text(f"✅ Episode {ep} added")
 
-    s = BULK_STATE[uid]
-    ep = s["ep"]
-
-    exists = episodes.find_one({
-        "anime": s["anime"], "season": s["season"],
-        "episode": ep, "quality": s["quality"]
-    })
-
-    if exists:
-        os.remove(temp_path)
-        await update.message.reply_text(f"⚠️ Episode {ep} already exists")
-        return
-
-    filename = build_filename(s["season"], ep)
-
-    sent = await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=InputFile(temp_path, filename=filename),
-        thumbnail=get_thumb()
-    )
-
-    episodes.insert_one({
-        "anime": s["anime"],
-        "season": s["season"],
-        "episode": ep,
-        "quality": s["quality"],
-        "file_id": sent.document.file_id
-    })
-
-    s["ep"] += 1
-    LAST_BULK[uid] = s.copy()
-    os.remove(temp_path)
-
-    await update.message.reply_text(f"✅ Episode {ep} added")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 # ========== PREVIEW ==========
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -240,8 +287,13 @@ async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).sort("episode", 1)
 
     txt = f"📦 {anime.upper()} S{season} {quality}\n\n"
+    found = False
     for e in eps:
         txt += f"E{e['episode']} ✅\n"
+        found = True
+
+    if not found:
+        txt += "❌ No episodes found"
 
     await update.message.reply_text(txt)
 
@@ -268,27 +320,17 @@ async def mongostatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = episodes.count_documents({})
     await update.message.reply_text(f"✅ MongoDB OK\n📦 Total episodes: {total}")
 
-# ========== GET EPISODE (ADMIN ONLY) ==========
+# ========== GET EPISODE ==========
 async def get_episode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    if len(context.args) != 4:
-        await update.message.reply_text(
-            "Usage: /get <ANIME> <SEASON> <QUALITY> <EP>"
-        )
-        return
-
     anime, season, quality, ep = context.args
-    anime = anime.upper()
-    season = int(season)
-    ep = int(ep)
-
     data = episodes.find_one({
-        "anime": anime,
-        "season": season,
+        "anime": anime.upper(),
+        "season": int(season),
         "quality": quality,
-        "episode": ep
+        "episode": int(ep)
     })
 
     if not data:
@@ -325,6 +367,7 @@ def main():
     app.add_handler(CommandHandler("reupload", reupload))
     app.add_handler(CommandHandler("mongostatus", mongostatus))
     app.add_handler(CommandHandler("get", get_episode))
+    app.add_handler(CommandHandler("settemplate", settemplate))  # 🆕 NEW
 
     app.add_handler(MessageHandler(filters.PHOTO, receive_thumb))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
