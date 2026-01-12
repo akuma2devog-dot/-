@@ -289,6 +289,18 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def run_server():
     HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
+    # ========== MONGO STATUS ==========
+async def mongo_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    try:
+        db.command("ping")
+        total = episodes.count_documents({})
+        await update.message.reply_text(
+            f"✅ MongoDB connected\n📦 Total episodes stored: {total}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ MongoDB error:\n{e}")
 
 # ========== MAIN ==========
 def main():
