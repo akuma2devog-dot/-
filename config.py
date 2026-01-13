@@ -1,24 +1,20 @@
 import os
 from pymongo import MongoClient
 
-# ---------- ENV ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 PORT = int(os.getenv("PORT", 10000))
 
 if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN is missing")
-
+    raise RuntimeError("BOT_TOKEN missing")
 if not MONGO_URI:
-    raise RuntimeError("❌ MONGO_URI is missing")
+    raise RuntimeError("MONGO_URI missing")
 
-# ---------- ADMINS ----------
 ADMIN_IDS = [6028405107]
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+def is_admin(uid: int) -> bool:
+    return uid in ADMIN_IDS
 
-# ---------- DATABASE ----------
 client = MongoClient(MONGO_URI)
 db = client.animebot
 
