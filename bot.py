@@ -1,3 +1,4 @@
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -6,11 +7,10 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters,
+    filters
 )
 
-from config import BOT_TOKEN, PORT
-
+from config import BOT_TOKEN
 from utils import (
     start,
     admin_panel,
@@ -23,29 +23,15 @@ from utils import (
     mongostatus,
     get_episode,
     receive_thumb,
-    settemplate,
+    settemplate
 )
 
-# ---------- HTTP SERVER (UptimeRobot) ----------
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
+PORT = int(os.getenv("PORT", 10000))
 
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-def run_server():
-    HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
-
-# ---------- MAIN ----------
-def main():
+# ---------- TELEGRAM BOT ----------
+def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CallbackQueryHandler(admin_buttons))
@@ -59,12 +45,31 @@ def main():
     app.add_handler(CommandHandler("get", get_episode))
     app.add_handler(CommandHandler("settemplate", settemplate))
 
-    # Media
     app.add_handler(MessageHandler(filters.PHOTO, receive_thumb))
 
-    print("🚀 Bot started successfully (rename disabled)")
+    print("🤖 Telegram bot started")
     app.run_polling()
 
+# ---------- HTTP SERVER ----------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+def run_server():
+    print("🌐 HTTP server started")
+    HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
+
+# ---------- MAIN ----------
 if __name__ == "__main__":
-    threading.Thread(target=run_server, daemon=True).start()
-    main()
+    # Start Telegram bot in background
+    threading.Thread(target=run_bot, daemon=True).start()
+
+    # Start HTTP server as main process
+    run_server()
