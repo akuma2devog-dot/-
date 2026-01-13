@@ -1,35 +1,41 @@
-from config import config, templates, is_admin as _is_admin
+from telegram import Update
+from telegram.ext import ContextTypes
 
-# ---------- ADMIN ----------
-def is_admin(uid: int) -> bool:
-    return _is_admin(uid)
+# ---------- BASIC COMMANDS (TEMP SAFE) ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Bot is online")
 
-# ---------- THUMBNAIL ----------
-def get_thumb():
-    doc = config.find_one({"_id": "thumb"})
-    return doc["file_id"] if doc else None
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👑 Admin panel")
 
-def set_thumb(file_id: str):
-    config.update_one(
-        {"_id": "thumb"},
-        {"$set": {"file_id": file_id}},
-        upsert=True
-    )
+async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
 
-# ---------- TEMPLATE ----------
-def get_template(anime: str):
-    doc = templates.find_one({"anime": anime})
-    return doc["template"] if doc else None
+# ---------- BULK (STUBS) ----------
+async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
 
-def build_filename(anime: str, season: int, episode: int, quality: str) -> str:
-    template = get_template(anime)
+async def bulk_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
 
-    if not template:
-        return f"S{season}E{episode} @anifindX.mkv"
+# ---------- MANAGEMENT ----------
+async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
 
-    return template.format(
-        ANIME=anime,
-        SEASON=f"{season:02}",
-        EP=f"{episode:02}",
-        QUALITY=quality
-    )
+async def delete_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+
+async def reupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+
+async def mongostatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+
+async def get_episode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+
+async def receive_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+
+async def settemplate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
