@@ -1,0 +1,4 @@
+BULK_STATE = {}
+LAST_BULK = {}
+REUPLOAD_STATE = {}
+SET_THUMB_WAIT = set()
