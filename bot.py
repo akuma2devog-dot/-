@@ -6,12 +6,11 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters
+    filters,
 )
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, PORT
 
-# 🔧 CORE FEATURES
 from utils import (
     start,
     admin_panel,
@@ -24,19 +23,10 @@ from utils import (
     mongostatus,
     get_episode,
     receive_thumb,
-    settemplate
+    settemplate,
 )
 
-# 🔴 TEMPORARY SAFE IMPORT
-try:
-    from rename import handle_doc
-except Exception as e:
-    print("⚠ rename.py failed to load:", e)
-    handle_doc = None
-
-PORT = 10000
-
-# ---------- HTTP SERVER ----------
+# ---------- HTTP SERVER (UptimeRobot) ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -72,11 +62,7 @@ def main():
     # Media
     app.add_handler(MessageHandler(filters.PHOTO, receive_thumb))
 
-    if handle_doc:
-        app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
-    else:
-        print("⚠ Document handler disabled (rename not loaded)")
-
+    print("🚀 Bot started successfully (rename disabled)")
     app.run_polling()
 
 if __name__ == "__main__":
