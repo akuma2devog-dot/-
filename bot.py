@@ -337,6 +337,35 @@ async def reupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     await update.message.reply_text("♻ Send new file now")
 
+# ========== GET EPISODE ==========
+async def get_episode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) != 4:
+        await update.message.reply_text(
+            "Usage:\n/get <ANIME> <SEASON> <QUALITY> <EP>"
+        )
+        return
+
+    anime, season, quality, ep = context.args
+
+    data = episodes.find_one({
+        "anime": anime.upper(),
+        "season": int(season),
+        "quality": quality,
+        "episode": int(ep)
+    })
+
+    if not data:
+        await update.message.reply_text("❌ Episode not found")
+        return
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=data["file_id"]
+    )
+
 # ========== HTTP ==========
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
