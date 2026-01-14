@@ -256,7 +256,7 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("⏳ Processing…")
 
-    # REUPLOAD
+    # ---------- REUPLOAD ----------
     if uid in REUPLOAD_STATE:
         r = REUPLOAD_STATE.pop(uid)
         filename = build_filename(r["anime"], r["season"], r["ep"], r["quality"])
@@ -280,55 +280,54 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("✅ Episode replaced")
         return
-# ---------- BULK ----------
-if uid not in BULK_STATE:
-    # bulk not active → ignore silently OR inform (your choice)
-    return
 
-if not is_admin(uid):
-    await update.message.reply_text("❌ Bulk is admin-only")
-    return
+    # ---------- BULK ----------
+    if uid not in BULK_STATE:
+        return
 
-s = BULK_STATE[uid]
-ep = s["ep"]
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Bulk is admin-only")
+        return
 
-# duplicate episode check
-if episodes.find_one({
-    "anime": s["anime"],
-    "season": s["season"],
-    "episode": ep,
-    "quality": s["quality"]
-}):
-    await update.message.reply_text(
-        f"⚠ Episode {ep} already exists\nUse /done or /resume"
+    s = BULK_STATE[uid]
+    ep = s["ep"]
+
+    if episodes.find_one({
+        "anime": s["anime"],
+        "season": s["season"],
+        "episode": ep,
+        "quality": s["quality"]
+    }):
+        await update.message.reply_text(
+            f"⚠ Episode {ep} already exists\nUse /done or /resume"
+        )
+        return
+
+    filename = build_filename(
+        s["anime"], s["season"], ep, s["quality"]
     )
-    return
 
-filename = build_filename(
-    s["anime"], s["season"], ep, s["quality"]
-)
+    sent = await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=doc.file_id,
+        filename=filename,
+        thumbnail=get_thumb()
+    )
 
-sent = await context.bot.send_document(
-    chat_id=update.effective_chat.id,
-    document=doc.file_id,
-    filename=filename,
-    thumbnail=get_thumb()
-)
+    episodes.insert_one({
+        "anime": s["anime"],
+        "season": s["season"],
+        "episode": ep,
+        "quality": s["quality"],
+        "file_id": sent.document.file_id
+    })
 
-episodes.insert_one({
-    "anime": s["anime"],
-    "season": s["season"],
-    "episode": ep,
-    "quality": s["quality"],
-    "file_id": sent.document.file_id
-})
+    s["ep"] += 1
+    LAST_BULK[uid] = s.copy()
 
-s["ep"] += 1
-LAST_BULK[uid] = s.copy()
-
-await update.message.reply_text(
-    f"✅ Episode {ep} added\nNext EP: {s['ep']}"
-)
+    await update.message.reply_text(
+        f"✅ Episode {ep} added\nNext EP: {s['ep']}"
+    )
 
 # ========== PREVIEW ==========
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
