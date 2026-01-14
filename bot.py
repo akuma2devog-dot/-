@@ -184,34 +184,68 @@ async def receive_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         SET_THUMB_WAIT.remove(uid)
         await update.message.reply_text("✅ Thumbnail updated")
 
-# ========== BULK ==========
+# ========== BULK START ==========
 async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+    uid = update.effective_user.id
+
+    # admin check
+    if not is_admin(uid):
+        await update.message.reply_text(
+            f"❌ You are not admin\nYour ID: {uid}"
+        )
         return
 
+    # args check
     if len(context.args) != 3:
-        await update.message.reply_text("Usage: /bulk <ANIME> <SEASON> <QUALITY>")
+        await update.message.reply_text(
+            "Usage:\n/bulk <ANIME> <SEASON> <QUALITY>\n"
+            "Example:\n/bulk COTE 1 1080p"
+        )
         return
 
     anime, season, quality = context.args
-    season = int(season)
+
+    # season validation
+    try:
+        season = int(season)
+    except ValueError:
+        await update.message.reply_text(
+            "❌ SEASON must be a number (example: 1)"
+        )
+        return
+
     anime = anime.upper()
 
+    # get next episode
     ep = get_next_episode(anime, season, quality)
 
-    state = {"anime": anime, "season": season, "quality": quality, "ep": ep}
-    BULK_STATE[update.effective_user.id] = state
-    LAST_BULK[update.effective_user.id] = state.copy()
+    state = {
+        "anime": anime,
+        "season": season,
+        "quality": quality,
+        "ep": ep
+    }
+
+    BULK_STATE[uid] = state
+    LAST_BULK[uid] = state.copy()
 
     await update.message.reply_text(
-        f"📦 Bulk started\n{anime} S{season} {quality}\nStarting EP {ep}"
+        f"📦 BULK STARTED\n\n"
+        f"Anime: {anime}\n"
+        f"Season: {season}\n"
+        f"Quality: {quality}\n"
+        f"Starting EP: {ep}\n\n"
+        f"📎 Now send files as DOCUMENTS"
     )
-
+    # ========== BULK STOP ==========
 async def bulk_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+
     if uid in BULK_STATE:
         BULK_STATE.pop(uid)
         await update.message.reply_text("🛑 Bulk stopped")
+    else:
+        await update.message.reply_text("ℹ️ No active bulk to stop")
 
 # ========== DOCUMENT ==========
 async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,44 +280,55 @@ async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("✅ Episode replaced")
         return
+# ---------- BULK ----------
+if uid not in BULK_STATE:
+    # bulk not active → ignore silently OR inform (your choice)
+    return
 
-    # BULK
-    if uid not in BULK_STATE or not is_admin(uid):
-        return
+if not is_admin(uid):
+    await update.message.reply_text("❌ Bulk is admin-only")
+    return
 
-    s = BULK_STATE[uid]
-    ep = s["ep"]
+s = BULK_STATE[uid]
+ep = s["ep"]
 
-    if episodes.find_one({
-        "anime": s["anime"],
-        "season": s["season"],
-        "episode": ep,
-        "quality": s["quality"]
-    }):
-        await update.message.reply_text(f"⚠ Episode {ep} already exists")
-        return
-
-    filename = build_filename(s["anime"], s["season"], ep, s["quality"])
-
-    sent = await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=doc.file_id,
-        filename=filename,
-        thumbnail=get_thumb()
+# duplicate episode check
+if episodes.find_one({
+    "anime": s["anime"],
+    "season": s["season"],
+    "episode": ep,
+    "quality": s["quality"]
+}):
+    await update.message.reply_text(
+        f"⚠ Episode {ep} already exists\nUse /done or /resume"
     )
+    return
 
-    episodes.insert_one({
-        "anime": s["anime"],
-        "season": s["season"],
-        "episode": ep,
-        "quality": s["quality"],
-        "file_id": sent.document.file_id
-    })
+filename = build_filename(
+    s["anime"], s["season"], ep, s["quality"]
+)
 
-    s["ep"] += 1
-    LAST_BULK[uid] = s.copy()
+sent = await context.bot.send_document(
+    chat_id=update.effective_chat.id,
+    document=doc.file_id,
+    filename=filename,
+    thumbnail=get_thumb()
+)
 
-    await update.message.reply_text(f"✅ Episode {ep} added")
+episodes.insert_one({
+    "anime": s["anime"],
+    "season": s["season"],
+    "episode": ep,
+    "quality": s["quality"],
+    "file_id": sent.document.file_id
+})
+
+s["ep"] += 1
+LAST_BULK[uid] = s.copy()
+
+await update.message.reply_text(
+    f"✅ Episode {ep} added\nNext EP: {s['ep']}"
+)
 
 # ========== PREVIEW ==========
 async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
